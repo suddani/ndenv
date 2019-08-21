@@ -1,0 +1,156 @@
+#!/usr/bin/env ruby
+require 'pathname'
+require 'open-uri'
+require 'net/http'
+require 'rubygems/package'
+require 'zlib'
+require 'fileutils'
+
+def versions
+  Dir["#{File.expand_path("#{__dir__}/../node_versions")}/node-*"].map do |path|
+    path.gsub("#{File.expand_path("#{__dir__}/../node_versions")}/node-","")
+  end
+end
+
+def setup
+  newversion = versions[0]
+  begin
+    `rm #{Pathname.new("#{__dir__}/../current_node_version")}`
+  rescue
+  end
+  begin
+    `ln -s #{File.expand_path("#{__dir__}/../node_versions")}/node-#{newversion} #{Pathname.new("#{__dir__}/../current_node_version")}`
+  rescue
+  end
+end
+
+def findVersions(line, available_versions)
+  result = line.match(/"v(\d+\.\d+\.\d+)/)
+  if result
+    available_versions.push(result[1])
+  end
+end
+
+def loadRemoteVersions
+  puts "Loading remote versions"
+  available_versions = []
+  begin
+    Net::HTTP.start("nodejs.org", use_ssl: true, open_timeout: 2) do |http|
+      resp = http.get("/dist/")
+      resp.body.each_line {|line| findVersions(line, available_versions)}
+    end
+  rescue Net::OpenTimeout => e
+    print "."
+    retry
+  end
+  available_versions
+end
+
+def downloadVersion(version)
+  # https://nodejs.org/dist/v4.2.1/node-v4.2.1-linux-x64.tar.gz
+  puts "Downloading #{version}..."
+
+  FileUtils.mkdir_p File.expand_path("#{__dir__}/../tmp")
+
+  file = "/dist/v#{version}/node-v#{version}-linux-x64.tar.gz"
+  begin
+    Net::HTTP.start("nodejs.org", use_ssl: true, open_timeout: 2) do |http|
+      resp = http.get(file)
+      open("#{File.expand_path(__dir__)}/../tmp/node-v#{version}-linux-x64.tar.gz", "wb") do |file|
+          file.write(resp.body)
+      end
+    end
+  rescue Net::OpenTimeout => e
+    print "."
+    retry
+  end
+  puts "done"
+end
+
+def unpackVersion(version)
+  FileUtils.mkdir_p File.expand_path("#{__dir__}/../node_versions")
+
+  # tar_extract = Gem::Package::TarReader.new(Zlib::GzipReader.open("/tmp/node-v#{version}-linux-x64.tar.gz"))
+  # tar_extract.rewind # The extract has to be rewinded after every iteration
+  # tar_extract.each do |entry|
+  #   puts entry.full_name
+  #   puts entry.directory?
+  #   puts entry.file?
+  #   # puts entry.read
+  # end
+  # tar_extract.close
+
+  tAR_LONGLINK = '././@LongLink'
+  tar_gz_archive = "#{File.expand_path(__dir__)}/../tmp/node-v#{version}-linux-x64.tar.gz"
+  destination = "#{File.expand_path("#{__dir__}/../node_versions")}"
+
+  Gem::Package::TarReader.new( Zlib::GzipReader.open tar_gz_archive ) do |tar|
+    dest = nil
+    tar.each do |entry|
+      if entry.full_name == tAR_LONGLINK
+        dest = File.join destination, entry.read.strip
+        next
+      end
+      dest ||= File.join destination, entry.full_name
+      if entry.directory?
+        FileUtils.rm_rf dest unless File.directory? dest
+        FileUtils.mkdir_p dest, :mode => entry.header.mode, :verbose => false
+      elsif entry.file?
+        FileUtils.rm_rf dest unless File.file? dest
+        File.open dest, "wb" do |f|
+          f.print entry.read
+        end
+        FileUtils.chmod entry.header.mode, dest, :verbose => false
+      elsif entry.header.typeflag == '2' #Symlink!
+        File.symlink entry.header.linkname, dest
+      end
+      dest = nil
+    end
+  end
+end
+
+def version_exists?(newversion, skip: false)
+  return true if skip
+  exists = loadRemoteVersions.include? newversion
+  return true if exists
+  puts "Version: #{newversion} does not exist"
+  false
+end
+
+if ARGV.length == 0
+  begin
+    puts "Current: #{`node -v`}"
+  rescue
+    puts "Current: none"
+  end
+  puts versions
+else
+  if ARGV[0] == "setup"
+    setup
+    exit
+  elsif ARGV[0] == "ls"
+    puts loadRemoteVersions
+    exit
+  elsif ARGV[0] == "install"
+    newversion = ARGV[1]
+    Kernel.exit unless version_exists?(newversion, skip: true)
+    downloadVersion(newversion)
+    puts "Install #{newversion}..."
+    unpackVersion(newversion)
+    exit
+  end
+  newversion = ARGV[0]
+  puts "Changing version to: #{newversion}"
+  unless versions.include? newversion
+    puts "Version: #{newversion} does not exist"
+    Kernel.exit
+  end
+  begin
+    `rm #{Pathname.new("#{__dir__}/../current_node_version")}`
+  rescue
+  end
+  begin
+    `ln -s #{File.expand_path("#{__dir__}/../node_versions")}/node-#{newversion} #{Pathname.new("#{__dir__}/../current_node_version")}`
+  rescue
+  end
+end
