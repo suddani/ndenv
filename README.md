@@ -25,3 +25,25 @@
     $ set -Ux fish_user_paths $HOME/.ndenv/current_node_version/bin $fish_user_paths
     $ set -Ux fish_user_paths node_modules/.bin $fish_user_paths
     ~~~
+
+# Usage
+
+1. List available node version for install
+   ~~~ sh
+   $ ndenv ls
+   ~~~
+2. Install one of the versions, for example 10.16.3
+   ~~~ sh
+   $ ndenv install 10.16.3
+   ~~~
+3. List currently set node version and all installed.
+   ~~~ sh
+   $ ndenv
+   Current: none
+   v10.16.3-linux-x64
+   ~~~
+4. Activate a installed node version
+   ~~~ sh
+   $ ndenv v10.16.3-linux-x64
+   Changing version to: v10.16.3-linux-x64
+   ~~~
